@@ -51,6 +51,9 @@ class Websocket():
         self.c.emit("applyOtUpdate", update)
         self.pending_text = new_text
 
+    def close(self):
+        self.c.close()
+
 def template(path):
     with open(os.path.join(ROOT_PATH, path), "r") as f:
         return string.Template(f.read())
@@ -120,6 +123,6 @@ class Page(TaskSet):
                 self.websocket.recv()
         gevent.spawn(_receive)
 
-    def on_stop(self):
+    def interrupt(self,reschedule=True):
         self.websocket.close()
-
+        super(Page, self).interrupt(reschedule=reschedule)
