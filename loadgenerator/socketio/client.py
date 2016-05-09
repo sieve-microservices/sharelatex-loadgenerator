@@ -26,7 +26,7 @@ class Client():
         print("<< " + res)
         data = decode(res)
         name = data.get("name", "")
-        request_success.fire(request_type='WebSocket Recv',
+        request_success.fire(request_type='WebSocketRecv',
                 name="socket.io/%s#%s" % (name,data["type"]),
                 response_time=int((time.time() - start_at) * 1000000),
                 response_length=len(res))
@@ -38,7 +38,7 @@ class Client():
         print(">> " + msg)
         self.ws.send(msg)
         request_success.fire(
-                request_type='WebSocket Sent',
+                request_type='WebSocketSent',
                 name="socket.io/%s#%s" % (pkt.get("name", ""), pkt["type"]),
                 response_time=int((time.time() - start_at) * 1000000),
                 response_length=len(msg))

@@ -3,3 +3,4 @@ remote_pdb
 websocket-client
 zmq
 influxdb
+statsd

@@ -4,11 +4,15 @@ import re
 import sys
 import time
 from threading import Thread
+import metrics
+import signal
+from datetime import datetime
 
 import requests
-from locust import HttpLocust, TaskSet, task
-
+import statsd
+from locust import HttpLocust, TaskSet, task, events
 from loadgenerator import project, csrf
+from influxdb import InfluxDBClient
 
 def login(l):
     resp = l.client.get("/login")
@@ -68,13 +72,40 @@ class WebsiteUser(HttpLocust):
     min_wait=5000
     max_wait=9000
 
-def start_swarm():
+host = os.environ.get("LOCUST_STATSD_HOST", "localhost")
+port = os.environ.get("LOCUST_STATSD_PORT", "8125")
+STATSD = statsd.StatsClient(host, port, prefix='loadgenerator')
+
+class RequestStats():
+    def __init__(self):
+        events.request_success += self.requests_stats
+        events.request_failure += self.requests_stats
+    def requests_stats(self, request_type="", name="", response_time=0, **kw):
+        STATSD.timing(request_type + "-" + name, response_time)
+
+def start_measure(*args, **kw):
+    time.sleep(10) # wait for the load generator to take effect
+    path = os.environ.get("LOCUST_METRICS_EXPORT", "measurements")
+    name = os.environ.get("LOCUST_MEASUREMENT_NAME", "measurement")
+    desc = os.environ.get("LOCUST_MEASUREMENT_DESCRIPTION", "linear increase")
+    start = datetime.utcnow()
+    time.sleep(int(os.environ.get("LOCUST_DURATION", "20")))
+    end = datetime.utcnow()
+    metrics.export(name, desc, path, start, end)
+    os.kill(os.getpid(), signal.SIGINT)
+
+events.hatch_complete += start_measure
+
+def measure():
     time.sleep(1)
-    payload = {
-            'locust_count': os.environ.get("LOCUST_USERS", '10'),
-            'hatch_rate': os.environ.get("LOCUST_HATCH_RATE", '1')
-            }
+    users = os.environ.get("LOCUST_USERS", '10')
+
+    change_swarm(users, os.environ.get("LOCUST_HATCH_RATE", "1"))
+    RequestStats()
+
+def change_swarm(count, rate):
+    payload = dict(locust_count=count, hatch_rate=rate)
     r = requests.post("http://localhost:8089/swarm", data=payload)
     print(r.text)
 
-Thread(target=start_swarm).start()
+Thread(target=measure).start()

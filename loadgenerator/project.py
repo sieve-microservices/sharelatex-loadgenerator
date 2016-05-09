@@ -19,7 +19,7 @@ class Websocket():
 
         self.c.on("otUpdateApplied", self.update_version)
         self.c.emit("joinProject", [{"project_id": project_id}], id=1)
-        with gevent.Timeout(10, False):
+        with gevent.Timeout(20, False):
             m = self.c.recv()
             self.root_folder =  m["args"][1]["rootFolder"][0]
             self.main_tex = m["args"][1]["rootDoc_id"]
