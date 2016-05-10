@@ -6,6 +6,7 @@ import heapq
 import csv
 import json
 import os.path
+from collections import defaultdict
 
 server = os.environ.get("LOCUST_INFLUXDB_SERVER", "localhost")
 port = int(os.environ.get("LOCUST_INFLUXDB_PORT", "8086"))
@@ -84,11 +85,15 @@ def dump_column_names(app):
 
 SYSTEM_METRICS = ["cpu", "blkio", "mem", "net"]
 
+CONTAINER_IMAGE_PATTERNS = defaultdict(lambda: ".*{0}:latest$")
+CONTAINER_IMAGE_PATTERNS["haproxy"] = ".*agent-instance:[^:]+$"
+
 def dump_app(app_name, path, begin, now):
     app = dump_column_names(app_name)
     queries = []
     for system in SYSTEM_METRICS:
-        q = "select * from \"docker_container_{}\" where container_image =~ /.*{}:latest$/ and time > '%s' and time < '%s'".format(system, app.name)
+        pattern = CONTAINER_IMAGE_PATTERNS[app.name].format(app.name)
+        q = "select * from \"docker_container_{}\" where container_image =~ /{}/ and time > '%s' and time < '%s'".format(system, pattern, app.name)
         queries.append(scroll(q, begin, now))
     q = "select * from \"{}\" where time > '%s' and time < '%s'".format(app.name)
     queries.append(scroll(q, begin, now, prefix=app.name))
@@ -118,6 +123,7 @@ APPS = ["chat",
         "web",
         "loadgenerator"]
 
+
 class Encoder(json.JSONEncoder):
     def default(self, obj):
         if hasattr(obj, '__json__'):
@@ -146,5 +152,4 @@ def export(name, description, path, start, end):
 if __name__ == '__main__':
     end = datetime.utcnow()
     start = end - timedelta(minutes=1)
-    import pdb; pdb.set_trace()
     export("test", "test export", "test", start, end)
