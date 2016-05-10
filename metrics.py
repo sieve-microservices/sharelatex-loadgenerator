@@ -23,7 +23,7 @@ SKIP_PREFIX = ["container_id", "host", "time"]
 def scroll(query, begin, until, prefix=None):
     diff = timedelta(minutes=4)
     while begin < until:
-        to = begin + diff
+        to = min(begin + diff, until)
         res = DB.query(query % (pad(begin), pad(to)))
         for batch in res:
             for row in batch:
@@ -60,9 +60,8 @@ class Metadata():
     services = []
     description = ""
     def __json__(s):
-        return {"start": s.start, "end": s.end, "services": s.services, "description": s.description}
+        return {"start": s.start, "end": s.end, "services": s.services, "description": s.description, "name": s.name}
 
-NON_FIELDS = ["container_id"]
 def dump_column_names(app):
     def query(what):
         names = set()
@@ -70,7 +69,7 @@ def dump_column_names(app):
         for name, cols in result.items():
             for col in cols:
                 col = col.values()[0]
-                if name[0] == app and name[0] not in SKIP_PREFIX:
+                if name[0] == app and col not in SKIP_PREFIX:
                     col = "-".join((app, col))
                 names.add(col)
         return names
@@ -95,7 +94,7 @@ def dump_app(app_name, path, begin, now):
     queries.append(scroll(q, begin, now, prefix=app.name))
     path = os.path.join(path, app.filename)
     with open(path, "w+") as f:
-        columns = app.fields + app.tags
+        columns = app.fields + app.tags + ["time"]
         writer = csv.DictWriter(f, fieldnames=columns, dialect=csv.excel_tab, extrasaction='ignore')
         writer.writeheader()
         for _, row in heapq.merge(*queries):
@@ -116,7 +115,8 @@ APPS = ["chat",
         "spelling",
         "tags",
         "track-changes",
-        "web"]
+        "web",
+        "loadgenerator"]
 
 class Encoder(json.JSONEncoder):
     def default(self, obj):
@@ -128,8 +128,8 @@ def export(name, description, path, start, end):
     queries = []
     metadata = Metadata()
     metadata.name = name
-    metadata.start = start.isoformat()
-    metadata.end = end.isoformat()
+    metadata.start = start.isoformat() + "Z"
+    metadata.end = end.isoformat() + "Z"
     metadata.description = description
 
     ts = datetime.utcnow().strftime("%Y%m%d%H%M%S-")
@@ -145,5 +145,6 @@ def export(name, description, path, start, end):
 
 if __name__ == '__main__':
     end = datetime.utcnow()
-    start = end - timedelta(minutes=10)
-    export("metrics", start, end)
+    start = end - timedelta(minutes=1)
+    import pdb; pdb.set_trace()
+    export("test", "test export", "test", start, end)
