@@ -83,29 +83,38 @@ class RequestStats():
     def requests_stats(self, request_type="", name="", response_time=0, **kw):
         STATSD.timing(request_type + "-" + name, response_time)
 
-def start_measure(*args, **kw):
-    time.sleep(10) # wait for the load generator to take effect
-    path = os.environ.get("LOCUST_METRICS_EXPORT", "measurements")
-    name = os.environ.get("LOCUST_MEASUREMENT_NAME", "measurement")
-    desc = os.environ.get("LOCUST_MEASUREMENT_DESCRIPTION", "linear increase")
-    start = datetime.utcnow()
-    time.sleep(int(os.environ.get("LOCUST_DURATION", "20")))
-    end = datetime.utcnow()
-    metrics.export(name, desc, path, start, end)
+METRICS_EXPORT_PATH = os.environ.get("LOCUST_METRICS_EXPORT", "measurements")
+MEASUREMENT_NAME = os.environ.get("LOCUST_MEASUREMENT_NAME", "measurement")
+MEASUREMENT_DESCRIPTION = os.environ.get("LOCUST_MEASUREMENT_DESCRIPTION", "linear increase")
+DURATION = int(os.environ.get("LOCUST_DURATION", "20"))
+USERS = os.environ.get("LOCUST_USERS", '10')
+HATCH_RATE = os.environ.get("LOCUST_HATCH_RATE", "1")
+LOAD_TYPE = os.environ.get("LOCUST_LOAD_TYPE", "constant") # linear, constant
+
+def stop_measure(started_at):
+    ended_at = datetime.utcnow()
+    metrics.export(MEASUREMENT_NAME, MEASUREMENT_DESCRIPTION, METRICS_EXPORT_PATH, started_at, ended_at)
     os.kill(os.getpid(), signal.SIGINT)
 
-events.hatch_complete += start_measure
+def constant_measure(*args, **kw):
+    # wait for the load generator to take effect
+    time.sleep(10)
+    started_at = datetime.utcnow()
+    time.sleep(DURATION)
+    stop_measure(started_at)
 
 def measure():
     time.sleep(1)
-    users = os.environ.get("LOCUST_USERS", '10')
-
-    change_swarm(users, os.environ.get("LOCUST_HATCH_RATE", "1"))
-    RequestStats()
-
-def change_swarm(count, rate):
-    payload = dict(locust_count=count, hatch_rate=rate)
+    payload = dict(locust_count=USERS, hatch_rate=HATCH_RATE)
     r = requests.post("http://localhost:8089/swarm", data=payload)
+    RequestStats()
     print(r.text)
+    if LOAD_TYPE == "constant":
+        events.hatch_complete += constant_measure
+    else:
+        started_at = datetime.utcnow()
+        def linear_measure(*args, **kw):
+            stop_measure(started_at)
+        events.hatch_complete += linear_measure
 
 Thread(target=measure).start()
