@@ -33,7 +33,10 @@ def scroll(query, begin, until, prefix=None):
                     row["container_id"] = row["container_id"][0:11]
 
                 time_col = row["time"][0:min(26, len(row["time"]) - 1)]
-                t = time.strptime(time_col, "%Y-%m-%dT%H:%M:%S.%f")
+                if len(time_col) == 19:
+                    t = time.strptime(time_col, "%Y-%m-%dT%H:%M:%S")
+                else:
+                    t = time.strptime(time_col, "%Y-%m-%dT%H:%M:%S.%f")
 
                 if prefix is not None:
                     for key in row.iterkeys():
