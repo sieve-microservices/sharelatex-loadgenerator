@@ -2,9 +2,11 @@ import socketio
 import gevent
 import random
 import os
+import re
 import string
 import uuid
-from . import ROOT_PATH, csrf
+import json
+from . import ROOT_PATH, csrf, randomwords
 
 from locust import TaskSet, task
 
@@ -77,6 +79,11 @@ def share_project(l):
     p = dict(_csrf=l.csrf_token, email="joerg.2@higgsboson.tk", privileges="readAndWrite")
     l.client.post("/project/%s/users" % l.project_id, data=p, name="/project/[id]/users")
 
+def spell_check(l):
+    data = dict(_csrf=l.csrf_token, language="en", words=randomwords.sample(1, 10))
+    print(json.dumps(data))
+    l.client.post("/spelling/check", json=data)
+
 def file_upload(l):
     path = os.path.join(ROOT_PATH, "tech-support.jpg")
     p = dict(folder_id=l.websocket.root_folder['_id'],
@@ -107,8 +114,14 @@ def compile(l):
             params={"build": files[0]["build"], "compileGroup": "standard", "pdfng": True},
             name="/project/[id]/output/output.pdf")
 
+def find_user_id(doc):
+    # window.csrfToken = "DwSsXuVc-uECsSv6dW5ifI4025HacsODuhb8"
+    user = re.search('window.user = ({[^;]+);', doc, re.IGNORECASE)
+    assert user, "No user found in response"
+    return json.loads(user.group(1))["id"]
+
 class Page(TaskSet):
-    tasks = { stop: 1, chat: 2, edit_document: 2, file_upload: 2, show_history: 2, file_upload: 2, compile: 2, share_project: 1}
+    tasks = { stop: 1, chat: 2, edit_document: 2, file_upload: 2, show_history: 2, file_upload: 2, compile: 2, share_project: 1, spell_check: 2}
     def on_start(self):
         projects = self.parent.projects
         assert len(projects) > 0
@@ -116,6 +129,7 @@ class Page(TaskSet):
 
         page = self.client.get("/project/%s" % self.project_id, name="/project/[id]")
         self.csrf_token = csrf.find_in_page(page.content)
+        self.user_id = find_user_id(page.content)
 
         self.websocket = Websocket(self.locust, self.project_id)
         def _receive():
