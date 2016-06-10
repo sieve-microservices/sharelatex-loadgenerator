@@ -77,8 +77,8 @@ def dump_column_names(app):
                     col = "-".join((app, col))
                 names.add(col)
         return names
-    tags = query('SHOW TAG KEYS FROM "%s", /docker_container.*/')
-    fields = query('SHOW FIELD KEYS FROM "%s", /docker_container.*/')
+    tags = query('show tag keys from "%s", /docker_container.*/')
+    fields = query('show field keys from "%s", /docker_container.*/')
 
     if "container_id" in fields:
         fields.remove("container_id")
@@ -96,7 +96,11 @@ def dump_app(app_name, path, begin, now):
     queries = []
     for system in SYSTEM_METRICS:
         pattern = CONTAINER_IMAGE_PATTERNS[app.name].format(app.name)
-        q = "select * from \"docker_container_{}\" where container_image =~ /{}/ and time > '%s' and time < '%s'".format(system, pattern, app.name)
+        q = """select * from "docker_container_{}" where
+                 "io.rancher.stack.name" = 'sharelatex'
+                   and container_image =~ /{}/
+                   and time > '%s' and time < '%s'
+            """.format(system, pattern, app.name)
         queries.append(scroll(q, begin, now))
     q = "select * from \"{}\" where time > '%s' and time < '%s'".format(app.name)
     queries.append(scroll(q, begin, now, prefix=app.name))
