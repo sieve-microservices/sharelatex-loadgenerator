@@ -8,13 +8,13 @@ from locust.events import request_success
 class Client():
     def __init__(self, locust):
         self.hooks = {}
-        url = urlparse(locust.client.base_url)
+        base_url = urlparse(locust.client.base_url)
         resp = locust.client.get("/socket.io/1/",
                                  params={"t": int(time.time()) * 1000},
                                  name="/socket.io/1/t=[ts]")
         fields = resp.content.split(":")
         assert len(fields) == 4, ("unexpected response for socketio handshake: '%s'" % resp.content)
-        url = "ws://%s/socket.io/1/websocket/%s" % (url.netloc, fields[0])
+        url = "ws://%s/socket.io/1/websocket/%s" % (base_url.netloc, fields[0])
         headers = {"Cookie": resp.request.headers["Cookie"]}
         self.ws = create_connection(url, header=headers)
         m = self._recv()
