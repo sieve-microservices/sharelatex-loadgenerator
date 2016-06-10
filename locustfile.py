@@ -7,6 +7,9 @@ from threading import Thread
 import metrics
 import signal
 from datetime import datetime
+import gevent
+import random
+from locust import runners
 
 import requests
 import statsd
@@ -69,8 +72,8 @@ class UserBehavior(TaskSet):
 
 class WebsiteUser(HttpLocust):
     task_set = UserBehavior
-    min_wait=5000
-    max_wait=9000
+    min_wait = 5000
+    max_wait = 9000
 
 host = os.environ.get("LOCUST_STATSD_HOST", "localhost")
 port = os.environ.get("LOCUST_STATSD_PORT", "8125")
@@ -83,13 +86,17 @@ class RequestStats():
     def requests_stats(self, request_type="", name="", response_time=0, **kw):
         STATSD.timing(request_type + "-" + name, response_time)
 
-METRICS_EXPORT_PATH = os.environ.get("LOCUST_METRICS_EXPORT", "measurements")
-MEASUREMENT_NAME = os.environ.get("LOCUST_MEASUREMENT_NAME", "measurement")
+METRICS_EXPORT_PATH     = os.environ.get("LOCUST_METRICS_EXPORT", "measurements")
+MEASUREMENT_NAME        = os.environ.get("LOCUST_MEASUREMENT_NAME", "measurement")
 MEASUREMENT_DESCRIPTION = os.environ.get("LOCUST_MEASUREMENT_DESCRIPTION", "linear increase")
-DURATION = int(os.environ.get("LOCUST_DURATION", "20"))
-USERS = os.environ.get("LOCUST_USERS", '10')
-HATCH_RATE = os.environ.get("LOCUST_HATCH_RATE", "1")
-LOAD_TYPE = os.environ.get("LOCUST_LOAD_TYPE", "constant") # linear, constant
+DURATION                = int(os.environ.get("LOCUST_DURATION", "20"))
+USERS                   = int(os.environ.get("LOCUST_USERS", '10'))
+HATCH_RATE              = float(os.environ.get("LOCUST_HATCH_RATE", "1"))
+LOAD_TYPE               = os.environ.get("LOCUST_LOAD_TYPE", "constant") # linear, constant, random
+RANDOM_MINWAIT          = os.environ.get("LOCUST_RANDOM_MINWAIT", 3)
+RANDOM_MAXWAIT          = os.environ.get("LOCUST_RANDOM_MAXWAIT", 6)
+START_STOP_RATIO        = os.environ.get("START_STOP_RATIO", 2)
+
 
 def stop_measure(started_at):
     ended_at = datetime.utcnow()
@@ -103,18 +110,49 @@ def constant_measure(*args, **kw):
     time.sleep(DURATION)
     stop_measure(started_at)
 
+def random_measure():
+    runner = runners.locust_runner
+    locust = runner.locust_classes[0]
+    def start_locust(_):
+        try:
+            locust().run()
+        except gevent.GreenletExit:
+            pass
+    start = START_STOP_RATIO / (1.0 + START_STOP_RATIO)
+    stop = 1 - start
+    started_at = datetime.utcnow()
+
+    while True:
+        print("start measurement")
+        if (datetime.utcnow() - started_at).seconds > DURATION:
+            break
+        if random.random() < start:
+            runner.locusts.spawn(start_locust, locust)
+        else:
+            runner.kill_locusts(1)
+        wait = random.randrange(RANDOM_MINWAIT * 1000, RANDOM_MAXWAIT * 1000) / 1000.0
+        gevent.sleep(wait)
+    stop_measure(started_at)
+
 def measure():
-    time.sleep(1)
-    payload = dict(locust_count=USERS, hatch_rate=HATCH_RATE)
-    r = requests.post("http://localhost:8089/swarm", data=payload)
+    time.sleep(5)
     RequestStats()
-    print(r.text)
     if LOAD_TYPE == "constant":
+        payload = dict(locust_count=USERS, hatch_rate=HATCH_RATE)
+        r = requests.post("http://localhost:8089/swarm", data=payload)
+        print(r.text)
+        #runners.locust_runner.start_hatching(USERS, HATCH_RATE)
         events.hatch_complete += constant_measure
-    else:
+    elif LOAD_TYPE == "linear":
+        payload = dict(locust_count=USERS, hatch_rate=HATCH_RATE)
+        r = requests.post("http://localhost:8089/swarm", data=payload)
+        print(r.text)
+        #runners.locust_runner.start_hatching(USERS, HATCH_RATE)
         started_at = datetime.utcnow()
         def linear_measure(*args, **kw):
             stop_measure(started_at)
         events.hatch_complete += linear_measure
+    else: # "random"
+        random_measure()
 
 Thread(target=measure).start()
