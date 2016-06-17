@@ -93,9 +93,9 @@ DURATION                = int(os.environ.get("LOCUST_DURATION", "20"))
 USERS                   = int(os.environ.get("LOCUST_USERS", '10'))
 HATCH_RATE              = float(os.environ.get("LOCUST_HATCH_RATE", "1"))
 LOAD_TYPE               = os.environ.get("LOCUST_LOAD_TYPE", "constant") # linear, constant, random
-RANDOM_MINWAIT          = os.environ.get("LOCUST_RANDOM_MINWAIT", 3)
-RANDOM_MAXWAIT          = os.environ.get("LOCUST_RANDOM_MAXWAIT", 6)
-START_STOP_RATIO        = os.environ.get("START_STOP_RATIO", 2)
+RANDOM_MINWAIT          = os.environ.get("LOCUST_RANDOM_MINWAIT", 2)
+RANDOM_MAXWAIT          = os.environ.get("LOCUST_RANDOM_MAXWAIT", 4)
+START_STOP_RATIO        = os.environ.get("START_STOP_RATIO", 1)
 
 
 def stop_measure(started_at):
@@ -120,10 +120,14 @@ def random_measure():
             pass
     start = START_STOP_RATIO / (1.0 + START_STOP_RATIO)
     stop = 1 - start
+
+    payload = dict(locust_count=locust_count, hatch_rate=1)
+    r = requests.post("http://localhost:8089/swarm", data=payload)
+    time.sleep(1)
+
     started_at = datetime.utcnow()
 
     while True:
-        print("start measurement")
         if (datetime.utcnow() - started_at).seconds > DURATION:
             break
         if random.random() < start:
