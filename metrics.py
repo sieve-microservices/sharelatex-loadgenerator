@@ -59,10 +59,12 @@ class Application:
 
 
 class Metadata():
-    start = None
-    end = None
-    services = []
-    description = ""
+    def __init__(self, settings, start, end):
+        services = []
+        name = settings
+        description = ""
+        start = start
+        end = end
     def __json__(s):
         return {"start": s.start, "end": s.end, "services": s.services, "description": s.description, "name": s.name}
 
@@ -77,8 +79,8 @@ def dump_column_names(app):
                     col = "-".join((app, col))
                 names.add(col)
         return names
-    tags = query('show tag keys from "%s", /docker_container.*/')
-    fields = query('show field keys from "%s", /docker_container.*/')
+    tags = query('show tag keys from /%s|docker_container.*/')
+    fields = query('show field keys from /%s|docker_container.*/')
 
     if "container_id" in fields:
         fields.remove("container_id")
@@ -137,21 +139,19 @@ class Encoder(json.JSONEncoder):
             return obj.__json__()
         return json.JSONEncoder.default(self, obj)
 
-def export(name, description, path, start, end):
+def export(metadata, start, end):
     queries = []
-    metadata = Metadata()
-    metadata.name = name
-    metadata.start = start.isoformat() + "Z"
-    metadata.end = end.isoformat() + "Z"
-    metadata.description = description
+    metadata["start"] = start.isoformat() + "Z"
+    metadata["end"] = end.isoformat() + "Z"
+    metadata["services"] = []
 
     ts = datetime.utcnow().strftime("%Y%m%d%H%M%S-")
-    path = os.path.join(path, ts + name)
+    path = os.path.join(metadata["metrics_export"], ts + metadata["measurement_name"])
     if not os.path.isdir(path):
         os.makedirs(path)
 
     for app in APPS:
-        metadata.services.append(dump_app(app, path, start, end))
+        metadata["services"].append(dump_app(app, path, start, end))
     with open(os.path.join(path, "metadata.json"), "w+") as f:
         json.dump(metadata, f, cls=Encoder, sort_keys=True, indent=4)
         f.flush()
@@ -159,4 +159,4 @@ def export(name, description, path, start, end):
 if __name__ == '__main__':
     end = datetime.utcnow()
     start = end - timedelta(minutes=1)
-    export("test", "test export", "test", start, end)
+    export(dict(measurement_name="test", metrics_export="test"), start, end)
