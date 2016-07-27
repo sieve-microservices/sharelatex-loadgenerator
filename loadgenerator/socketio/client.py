@@ -5,6 +5,11 @@ from urlparse import urlparse
 
 from locust.events import request_success
 
+DEBUG=False
+
+def debug(msg):
+    if DEBUG: print(msg)
+
 class Client():
     def __init__(self, locust):
         self.hooks = {}
@@ -23,7 +28,7 @@ class Client():
     def _recv(self):
         start_at = time.time()
         res = self.ws.recv()
-        print("<< " + res)
+        debug("<< " + res)
         data = decode(res)
         name = data.get("name", "")
         request_success.fire(request_type='WebSocketRecv',
@@ -35,7 +40,7 @@ class Client():
     def _send(self, pkt):
         start_at = time.time()
         msg = encode(pkt)
-        print(">> " + msg)
+        debug(">> " + msg)
         self.ws.send(msg)
         request_success.fire(
                 request_type='WebSocketSent',
@@ -55,11 +60,11 @@ class Client():
     def recv(self):
         while True:
             r = self._recv()
-            print(r)
+            debug(r)
             if r["type"] == "heartbeat":
                 self._send({"type": "heartbeat"})
             elif r["type"] == "event" and r["name"] in self.hooks:
-                print("trigger hook")
+                debug("trigger hook")
                 self.hooks[r["name"]](r["args"])
             else:
                 return r

@@ -81,7 +81,6 @@ def share_project(l):
 
 def spell_check(l):
     data = dict(_csrf=l.csrf_token, language="en", words=randomwords.sample(1, 10))
-    print(json.dumps(data))
     l.client.post("/spelling/check", json=data)
 
 def file_upload(l):
