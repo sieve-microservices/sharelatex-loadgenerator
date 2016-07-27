@@ -87,7 +87,7 @@ class UserBehavior(TaskSet):
     def on_start(self):
         global user
         global logins_per_acc
-        user += 1.0 / logins_per_acc
+        user += 1.0 / logins_per_acc % 300
         self.email = "user%d@higgsboson.tk" % int(user)
         print(self.email)
         login(self)
@@ -135,6 +135,11 @@ def start_hatch(users, hatch_rate):
     r = requests.post("http://localhost:8089/swarm", data=payload)
     print(r.text)
 
+def print_color(text):
+    CSI="\x1B["
+    reset=CSI+"m"
+    print((CSI+"31;40m%s"+CSI+"0m") % text)
+
 def random_measure():
     runner = runners.locust_runner
     locust = runner.locust_classes[0]
@@ -144,25 +149,39 @@ def random_measure():
         except gevent.GreenletExit:
             pass
 
-    start_hatch(USERS, 1)
-    time.sleep(10)
+    print_color("start hatching with %d/%d" % (USER_MEAN, len(runner.locusts)))
+    start_hatch(1, 1)
+    while USER_MEAN > len(runner.locusts):
+        runner.locusts.spawn(start_locust, locust)
+        time.sleep(2)
 
     started_at = datetime.utcnow()
 
     while True:
         if (datetime.utcnow() - started_at).seconds > DURATION:
             break
-        diff = int(random.normalvariate(USER_MEAN, USER_STD) - runner.user_count)
+        new_user = -1
+        while new_user < 0:
+            new_user = int(random.normalvariate(USER_MEAN, USER_STD))
 
-        if diff > 0:
-            print("start %d clients" % diff)
-            for i in range(diff):
+        print_color("new user %d clients" % new_user)
+        if new_user > len(runner.locusts):
+            while new_user > len(runner.locusts):
                 runner.locusts.spawn(start_locust, locust)
-        elif diff < 0:
-            print("stop %d clients" % diff)
-            runner.kill_locusts(diff)
-        STATSD.gauge("user", runner.user_count)
-        gevent.sleep(random.normalvariate(SPAWN_WAIT_MEAN, SPAWN_WAIT_STD))
+                print("spawn user: now: %d" % len(runner.locusts))
+                time.sleep(1)
+        elif new_user < len(runner.locusts):
+            locusts = list([l for l in runner.locusts])
+            diff = len(locusts) - new_user
+            if diff > 0:
+                for l in random.sample(locusts, diff):
+                    if new_user >= len(runner.locusts): break
+                    runner.locusts.killone(l)
+                    print("stop user: now: %d" % len(runner.locusts))
+        STATSD.gauge("user", len(runner.locusts))
+        wait = random.normalvariate(SPAWN_WAIT_MEAN, SPAWN_WAIT_STD)
+        print_color("cooldown for %f" % wait)
+        time.sleep(wait)
     stop_measure(started_at)
 
 def measure():
