@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 import time
 import heapq
 import csv
+import gzip
 import json
 import os.path
 from collections import defaultdict
@@ -48,7 +49,7 @@ def scroll(query, begin, until, prefix=None):
 class Application:
     def __init__(self, n, t, f):
         self.name = n
-        self.filename = n + ".tsv"
+        self.filename = n + ".tsv.gz"
         self.tags = list(t)
         self.tags.sort()
         self.fields = list(f)
@@ -107,7 +108,7 @@ def dump_app(app_name, path, begin, now):
     q = "select * from \"{}\" where time > '%s' and time < '%s'".format(app.name)
     queries.append(scroll(q, begin, now, prefix=app.name))
     path = os.path.join(path, app.filename)
-    with open(path, "w+") as f:
+    with gzip.open(path, "wb") as f:
         columns = app.fields + app.tags + ["time"]
         writer = csv.DictWriter(f, fieldnames=columns, dialect=csv.excel_tab, extrasaction='ignore')
         writer.writeheader()
