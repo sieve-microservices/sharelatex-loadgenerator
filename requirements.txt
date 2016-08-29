@@ -4,3 +4,6 @@ websocket-client
 zmq
 influxdb
 statsd
+numpy
+pandas
+seaborn
