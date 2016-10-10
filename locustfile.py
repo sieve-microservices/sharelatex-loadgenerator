@@ -14,9 +14,11 @@ from locust.core import TaskSet
 from locust import HttpLocust, TaskSet, task, events, runners
 import requests
 import statsd
+import pandas as pd
 
 from loadgenerator import project, csrf
 import metrics
+import logparser
 
 host = os.environ.get("LOCUST_STATSD_HOST", "localhost")
 port = os.environ.get("LOCUST_STATSD_PORT", "8125")
@@ -25,15 +27,17 @@ METRICS_EXPORT_PATH     = os.environ.get("LOCUST_METRICS_EXPORT", "measurements"
 MEASUREMENT_NAME        = os.environ.get("LOCUST_MEASUREMENT_NAME", "measurement")
 MEASUREMENT_DESCRIPTION = os.environ.get("LOCUST_MEASUREMENT_DESCRIPTION", "linear increase")
 DURATION                = int(os.environ.get("LOCUST_DURATION", "20"))
+print(DURATION)
 USERS                   = int(os.environ.get("LOCUST_USERS", '10'))
 HATCH_RATE              = float(os.environ.get("LOCUST_HATCH_RATE", "1"))
-LOAD_TYPE               = os.environ.get("LOCUST_LOAD_TYPE", "constant") # linear, constant, random
+LOAD_TYPE               = os.environ.get("LOCUST_LOAD_TYPE", "constant") # linear, constant, random, nasa, worldcup
 SPAWN_WAIT_MEAN         = int(os.environ.get("LOCUST_SPAWN_WAIT_MEAN", "10"))
 SPAWN_WAIT_STD          = int(os.environ.get("LOCUST_SPAWN_WAIT_STD", "4"))
 USER_MEAN               = int(os.environ.get("LOCUST_USER_MEAN", "40"))
 USER_STD                = int(os.environ.get("LOCUST_USER_STD", "5"))
 WAIT_MEAN               = int(os.environ.get("LOCUST_WAIT_MEAN", "10"))
 WAIT_STD                = int(os.environ.get("LOCUST_WAIT_STD", "4"))
+WEB_LOGS_PATH           = os.environ.get("LOCUST_LOG_PATH", "logs") # path to nasa/worldcup logs
 
 def wait(self):
     gevent.sleep(random.normalvariate(WAIT_MEAN, WAIT_STD))
@@ -41,6 +45,7 @@ TaskSet.wait = wait
 
 def login(l):
     resp = l.client.get("/login")
+    print(resp)
     l.csrf_token = csrf.find_in_page(resp.content)
     data = {
         "_csrf": l.csrf_token,
@@ -48,6 +53,7 @@ def login(l):
         "password": "password"
     }
     r = l.client.post("/login", data)
+    print(r)
     assert r.json().get("redir", None) == "/project"
 
 def create_delete_project(l):
@@ -140,6 +146,32 @@ def print_color(text):
     reset=CSI+"m"
     print((CSI+"31;40m%s"+CSI+"0m") % text)
 
+
+def replay_log_measure(df):
+    def wait(self):
+        from remote_pdb import RemotePdb
+        RemotePdb('127.0.0.1', 4444).set_trace()
+        gevent.sleep(random.normalvariate(WAIT_MEAN, WAIT_STD))
+    TaskSet.wait = wait
+
+    runner = runners.locust_runner
+    locust = runner.locust_classes[0]
+    started_at = datetime.utcnow()
+    for client in df.groupby(["client_id", "session_id"]):
+        pass
+    while True:
+        if (datetime.utcnow() - started_at).seconds > DURATION:
+            break
+        def start_locust(_):
+            try:
+                l = locust()
+                #l.requests = 
+                l.run()
+            except gevent.GreenletExit:
+                pass
+        runner.locusts.spawn(start_locust, locust)
+
+
 def random_measure():
     runner = runners.locust_runner
     locust = runner.locust_classes[0]
@@ -158,8 +190,10 @@ def random_measure():
     started_at = datetime.utcnow()
 
     while True:
-        if (datetime.utcnow() - started_at).seconds > DURATION:
+        seconds = (datetime.utcnow() - started_at).seconds
+        if seconds > DURATION:
             break
+        print("%d seconds left!" % (DURATION - seconds))
         new_user = -1
         while new_user < 0:
             new_user = int(random.normalvariate(USER_MEAN, USER_STD))
@@ -176,13 +210,47 @@ def random_measure():
             if diff > 0:
                 for l in random.sample(locusts, diff):
                     if new_user >= len(runner.locusts): break
-                    runner.locusts.killone(l)
+                    try:
+                        runner.locusts.killone(l)
+                    except Exception as e:
+                        print("failed to kill locust: %s" % e)
                     print("stop user: now: %d" % len(runner.locusts))
         STATSD.gauge("user", len(runner.locusts))
         wait = random.normalvariate(SPAWN_WAIT_MEAN, SPAWN_WAIT_STD)
         print_color("cooldown for %f" % wait)
         time.sleep(wait)
     stop_measure(started_at)
+
+def read_log(type):
+    if type == "nasa":
+        read_log = logparser.read_nasa
+    else: # "worldcup"
+        read_log = logparser.read_worldcup
+    df = read_log(WEB_LOGS_PATH, limit=1000)
+    filter = df["type"].isin(["HTML", "DYNAMIC", "DIRECTORY"])
+    if type == "worldcup":
+        filter = filter & (df.region == "Paris") & (df.server == 4)
+    return df[filter]
+
+def session_number(v):
+    diff = v.timestamp.diff(1)
+    diff.fillna(0, inplace=True)
+    sessions = (diff > pd.Timedelta(minutes=10)).cumsum()
+    data = dict(client_id=v.client_id, timestamp=v.timestamp,
+                session_id=sessions.values)
+    return pd.DataFrame(data)
+
+def started_at(v):
+    data = dict(client_id=v.client_id, timestamp=v.timestamp, session_id=v.session_id,
+                started_at=[v.timestamp.iloc[0]] * len(v.timestamp))
+    return pd.DataFrame(data)
+
+def group_log_by_sessions(df):
+    df = df.sort_values("timestamp")
+    per_client = df.groupby(df.client_id, sort=False)
+    with_session = per_client.apply(session_number)
+    by = [with_session.client_id, with_session.session_id]
+    return with_session.groupby(by).apply(started_at)
 
 def measure():
     RequestStats()
@@ -196,7 +264,13 @@ def measure():
         def linear_measure(*args, **kw):
             stop_measure(started_at)
         events.hatch_complete += linear_measure
-    else: # "random"
+    elif LOAD_TYPE == "random":
         random_measure()
+    elif LOAD_TYPE == "nasa" or LOAD_TYPE == "worldcup":
+        df = read_log(LOAD_TYPE).head(10000)
+        replay_log_measure(group_log_by_sessions(df))
+    else:
+        sys.stderr.write("unsupported load type: %s" % LOAD_TYPE)
+        sys.exit(1)
 
 Thread(target=measure).start()

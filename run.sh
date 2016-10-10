@@ -17,12 +17,25 @@ export LOCUST_MEASUREMENT_DESCRIPTION="normal distributed number of users with n
 #    locust -H http://sharelatex.local
 #done
 
-for i in $(seq 1 5); do
-  export LOCUST_USERS=40
-  export LOCUST_LOAD_TYPE=random
-  export LOCUST_MEASUREMENT_NAME="random-users-μ40-σ20-60min-$i"
-  locust -H http://sharelatex.local
+for j in $(seq 1 4); do
+  #python scale-rancher.py --scale "$j" sharelatex clsi,chat,contacts,docstore,tags,doc-updater,real-time,track-changes,web
+  python scale-rancher.py --scale "$j" sharelatex clsi,chat,contacts,docstore,tags,doc-updater,track-changes,web
+  for i in $(seq 1 5); do
+    export LOCUST_DURATION=1200
+    export LOCUST_USER_MEAN=25
+    export LOCUST_USER_STD=10
+    export LOCUST_LOAD_TYPE=random
+    export LOCUST_MEASUREMENT_NAME="random-users-mean25-std10-20min-scale${j}-${i}"
+    locust -H http://sharelatex.local
+  done
 done
+
+#for i in $(seq 1 1); do
+#  export LOCUST_USERS=40
+#  export LOCUST_LOAD_TYPE=nasa
+#  export LOCUST_MEASUREMENT_NAME="random-users-μ40-σ20-60min-$i"
+#  locust -H http://sharelatex.local
+#done
 
 #for i in $(seq 1 5); do
 #    export LOCUST_USERS=70
