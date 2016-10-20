@@ -7,7 +7,7 @@ import string
 import uuid
 import json
 from . import ROOT_PATH, csrf, randomwords
-
+from gevent.hub import ConcurrentObjectUseError
 from locust import TaskSet, task
 
 class Websocket():
@@ -132,8 +132,11 @@ class Page(TaskSet):
 
         self.websocket = Websocket(self.locust, self.project_id)
         def _receive():
-            while True:
-                self.websocket.recv()
+            try:
+                while True:
+                    self.websocket.recv()
+            except ConcurrentObjectUseError:
+                print("websocket closed")
         gevent.spawn(_receive)
 
     def interrupt(self,reschedule=True):
