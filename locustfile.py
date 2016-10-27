@@ -8,13 +8,16 @@ import signal
 from datetime import datetime
 import random
 
+from gevent.queue import Queue, Full, Empty
 from influxdb import InfluxDBClient
 import gevent
 from locust.core import TaskSet
 from locust import HttpLocust, TaskSet, task, events, runners
+from locust.exception import StopLocust
 import requests
 import statsd
 import pandas as pd
+import numpy as np
 
 from loadgenerator import project, csrf
 import metrics
@@ -45,7 +48,6 @@ TaskSet.wait = wait
 
 def login(l):
     resp = l.client.get("/login")
-    print(resp)
     l.csrf_token = csrf.find_in_page(resp.content)
     data = {
         "_csrf": l.csrf_token,
@@ -53,7 +55,6 @@ def login(l):
         "password": "password"
     }
     r = l.client.post("/login", data)
-    print(r)
     assert r.json().get("redir", None) == "/project"
 
 def create_delete_project(l):
@@ -93,12 +94,19 @@ class UserBehavior(TaskSet):
     def on_start(self):
         global user
         global logins_per_acc
-        user += 1.0 / logins_per_acc % 300
-        self.email = "user%d@higgsboson.tk" % int(user)
+        user += 1.0 / logins_per_acc
+        self.email = "user%d@higgsboson.tk" % (int(user) % 300)
         print(self.email)
         login(self)
 
 class WebsiteUser(HttpLocust):
+    if LOAD_TYPE == "nasa" or LOAD_TYPE == "worldcup":
+        def __init__(self, client_id, timestamps, queue):
+            self.request_timestamps = timestamps
+            self.request_number = 0
+            self.client_id = client_id
+            self.client_queue = queue
+            super(WebsiteUser, self).__init__()
     task_set = UserBehavior
 
 class RequestStats():
@@ -109,12 +117,19 @@ class RequestStats():
 
     def requests_success(self, request_type="", name="", response_time=0, **kw):
         STATSD.timing(request_type + "-" + name, response_time)
+        if not request_type.startswith("WebSocket"):
+            print(response_time)
+	    STATSD.timing("requests_success", response_time)
 
     def requests_failure(self, request_type="", name="", response_time=0, exception=None, **kw):
-        STATSD.incr(request_type + "-" + name + "-error")
+        STATSD.timing(request_type + "-" + name + "-error", response_time)
+        if not request_type.startswith("WebSocket"):
+            print(response_time)
+	    STATSD.timing("requests_failure", response_time)
 
     def locust_error(self, locust_instance=None, exception=None, tb=None):
         STATSD.incr(locust_instance.__class__.__name__ + "-" + exception.__class__.__name__)
+        STATSD.incr("requests_error")
 
 def stop_measure(started_at):
     ended_at = datetime.utcnow()
@@ -142,35 +157,53 @@ def start_hatch(users, hatch_rate):
     print(r.text)
 
 def print_color(text):
-    CSI="\x1B["
-    reset=CSI+"m"
-    print((CSI+"31;40m%s"+CSI+"0m") % text)
+    print("\x1B[31;40m%s\x1B[0m" % text)
 
+def process_requests(self):
+    i = self.locust.request_number
+    timestamps = self.locust.request_timestamps
+    if i < timestamps.size - 1:
+	delta = (timestamps.iloc[i - 1] - timestamps.iloc[i]) / np.timedelta64(1, 's')
+	print("client %s waits for %s" % (self.locust.client_id, delta))
+	gevent.sleep(delta)
+	self.locust.request_number += 1
+    else:
+        try:
+	    idx, timestamps = self.locust.client_queue.get(timeout=1)
+            self.client_id = idx
+	    self.request_timestamps = timestamps
+	    self.request_number = 0
+            return
+        except Empty:
+	    raise StopLocust("stop this instance")
 
 def replay_log_measure(df):
-    def wait(self):
-        from remote_pdb import RemotePdb
-        RemotePdb('127.0.0.1', 4444).set_trace()
-        gevent.sleep(random.normalvariate(WAIT_MEAN, WAIT_STD))
-    TaskSet.wait = wait
-
+    TaskSet.wait = process_requests
     runner = runners.locust_runner
     locust = runner.locust_classes[0]
-    started_at = datetime.utcnow()
-    for client in df.groupby(["client_id", "session_id"]):
-        pass
-    while True:
-        if (datetime.utcnow() - started_at).seconds > DURATION:
-            break
+    start_hatch(0, 1)
+
+    by_session = df.groupby(["started_at", "client_id", "session_id"])
+    started_at = by_session.first().timestamp.iloc[0]
+    real_started_at = datetime.utcnow()
+    queue = Queue(maxsize=1)
+
+    for idx, client in by_session:
+        timestamps = client.timestamp
+        now = timestamps.iloc[0]
+        gevent.sleep((now - started_at) / np.timedelta64(1, 's'))
+        print("sleep (%s - %s) %s" % (now, started_at, (now - started_at) / np.timedelta64(1, 's')))
+        started_at = now
         def start_locust(_):
             try:
-                l = locust()
-                #l.requests = 
+                l = WebsiteUser(idx, timestamps, queue)
                 l.run()
             except gevent.GreenletExit:
                 pass
-        runner.locusts.spawn(start_locust, locust)
-
+        try:
+	    queue.put((idx[1], timestamps), block=False)
+        except Full:
+            runner.locusts.spawn(start_locust, locust)
 
 def random_measure():
     runner = runners.locust_runner
@@ -182,7 +215,7 @@ def random_measure():
             pass
 
     print_color("start hatching with %d/%d" % (USER_MEAN, len(runner.locusts)))
-    start_hatch(1, 1)
+    start_hatch(0, 1)
     while USER_MEAN > len(runner.locusts):
         runner.locusts.spawn(start_locust, locust)
         time.sleep(2)
@@ -226,11 +259,15 @@ def read_log(type):
         read_log = logparser.read_nasa
     else: # "worldcup"
         read_log = logparser.read_worldcup
-    df = read_log(WEB_LOGS_PATH, limit=1000)
-    filter = df["type"].isin(["HTML", "DYNAMIC", "DIRECTORY"])
-    if type == "worldcup":
-        filter = filter & (df.region == "Paris") & (df.server == 4)
-    return df[filter]
+    df = read_log(WEB_LOGS_PATH)
+    return df[df["type"].isin(["HTML", "DYNAMIC", "DIRECTORY"])]
+    #if type == "worldcup":
+    #    filter = filter & (df.region == "Paris")
+    #return df[filter]
+    #if type == "worldcup":
+    #    return df[df.region == "Paris"]
+    #else:
+    #    return df
 
 def session_number(v):
     diff = v.timestamp.diff(1)
@@ -267,7 +304,7 @@ def measure():
     elif LOAD_TYPE == "random":
         random_measure()
     elif LOAD_TYPE == "nasa" or LOAD_TYPE == "worldcup":
-        df = read_log(LOAD_TYPE).head(10000)
+        df = read_log(LOAD_TYPE)
         replay_log_measure(group_log_by_sessions(df))
     else:
         sys.stderr.write("unsupported load type: %s" % LOAD_TYPE)
