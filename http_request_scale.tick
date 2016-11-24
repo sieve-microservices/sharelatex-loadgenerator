@@ -1,0 +1,53 @@
+var web = stream 
+    |from()
+        .measurement('web')
+
+var cpu_percentile = web
+    |window()
+        .period(30s)
+        .every(1s)
+    |mean('http-requests_Project_Project_id_GET_200_mean')
+    |log()
+
+var cpu_percentile2 = web
+    |window()
+        .period(60s)
+        .every(1s)
+    |mean('http-requests_Project_Project_id_GET_200_mean')
+    |log()
+
+var scale_out = cpu_percentile
+    @scale()
+        .simulate(FALSE)
+        .debug(TRUE)
+        .name('web')
+        .when('mean > 1400')
+        .by('current + 1')
+        .min_instances(2)
+        .max_instances(10)
+        .cooldown('20s')
+
+var scale_in = cpu_percentile2
+    @scale()
+        .simulate(FALSE)
+        .debug(TRUE)
+        .name('web')
+        .when('mean < 1120 AND mean > 0')
+        .by('current - 1')
+        .min_instances(2)
+        .max_instances(10)
+        .cooldown('60s')
+
+scale_out
+    |influxDBOut()
+        .database('metrics')
+        .measurement('autoscaling')
+        .flushInterval(1d)
+        .buffer(1)
+
+scale_in
+    |influxDBOut()
+        .database('metrics')
+        .measurement('autoscaling')
+        .flushInterval(1d)
+        .buffer(1)

@@ -40,6 +40,8 @@ USER_MEAN               = int(os.environ.get("LOCUST_USER_MEAN", "40"))
 USER_STD                = int(os.environ.get("LOCUST_USER_STD", "5"))
 WAIT_MEAN               = int(os.environ.get("LOCUST_WAIT_MEAN", "10"))
 WAIT_STD                = int(os.environ.get("LOCUST_WAIT_STD", "4"))
+TIMESTAMP_START         = os.environ.get("LOCUST_TIMESTAMP_START", '1998-06-02 08:50:00')
+TIMESTAMP_STOP          = os.environ.get("LOCUST_TIMESTAMP_STOP", '1998-06-02 09:50:00')
 WEB_LOGS_PATH           = os.environ.get("LOCUST_LOG_PATH", "logs") # path to nasa/worldcup logs
 
 def wait(self):
@@ -103,7 +105,7 @@ class WebsiteUser(HttpLocust):
     if LOAD_TYPE == "nasa" or LOAD_TYPE == "worldcup":
         def __init__(self, client_id, timestamps, queue):
             self.request_timestamps = timestamps
-            self.request_number = 0
+            self.request_number = 1
             self.client_id = client_id
             self.client_queue = queue
             super(WebsiteUser, self).__init__()
@@ -118,13 +120,13 @@ class RequestStats():
     def requests_success(self, request_type="", name="", response_time=0, **kw):
         STATSD.timing(request_type + "-" + name, response_time)
         if not request_type.startswith("WebSocket"):
-            print(response_time)
+            print("%s - %s: %s" % (request_type, name, response_time))
 	    STATSD.timing("requests_success", response_time)
 
     def requests_failure(self, request_type="", name="", response_time=0, exception=None, **kw):
         STATSD.timing(request_type + "-" + name + "-error", response_time)
         if not request_type.startswith("WebSocket"):
-            print(response_time)
+            print("%s - %s: %s" % (request_type, name, response_time))
 	    STATSD.timing("requests_failure", response_time)
 
     def locust_error(self, locust_instance=None, exception=None, tb=None):
@@ -162,9 +164,9 @@ def print_color(text):
 def process_requests(self):
     i = self.locust.request_number
     timestamps = self.locust.request_timestamps
-    if i < timestamps.size - 1:
-	delta = (timestamps.iloc[i - 1] - timestamps.iloc[i]) / np.timedelta64(1, 's')
-	print("client %s waits for %s" % (self.locust.client_id, delta))
+    if i < timestamps.size:
+	delta = (timestamps.iloc[i] - timestamps.iloc[i - 1]) / np.timedelta64(1, 's')
+	print("client %s waits or %s" % (self.locust.client_id, delta))
 	gevent.sleep(delta)
 	self.locust.request_number += 1
     else:
@@ -172,11 +174,20 @@ def process_requests(self):
 	    idx, timestamps = self.locust.client_queue.get(timeout=1)
             self.client_id = idx
 	    self.request_timestamps = timestamps
-	    self.request_number = 0
-            return
+	    self.request_number = 1
         except Empty:
 	    raise StopLocust("stop this instance")
 
+def report_users():
+    while True:
+        try:
+            val = runners.locust_runner.user_count
+            STATSD.set("website_users", val)
+        except SystemError as e:
+            print("could not update `website_users` statsd counter: %s" % e)
+        gevent.sleep(2)
+
+GREENLETS = []
 def replay_log_measure(df):
     TaskSet.wait = process_requests
     runner = runners.locust_runner
@@ -186,7 +197,10 @@ def replay_log_measure(df):
     by_session = df.groupby(["started_at", "client_id", "session_id"])
     started_at = by_session.first().timestamp.iloc[0]
     real_started_at = datetime.utcnow()
+
+    real_started_at = datetime.utcnow()
     queue = Queue(maxsize=1)
+    runner.locusts.spawn(report_users)
 
     for idx, client in by_session:
         timestamps = client.timestamp
@@ -196,7 +210,7 @@ def replay_log_measure(df):
         started_at = now
         def start_locust(_):
             try:
-                l = WebsiteUser(idx, timestamps, queue)
+                l = WebsiteUser(idx[1], timestamps, queue)
                 l.run()
             except gevent.GreenletExit:
                 pass
@@ -204,6 +218,7 @@ def replay_log_measure(df):
 	    queue.put((idx[1], timestamps), block=False)
         except Full:
             runner.locusts.spawn(start_locust, locust)
+    stop_measure(real_started_at)
 
 def random_measure():
     runner = runners.locust_runner
@@ -260,14 +275,12 @@ def read_log(type):
     else: # "worldcup"
         read_log = logparser.read_worldcup
     df = read_log(WEB_LOGS_PATH)
-    return df[df["type"].isin(["HTML", "DYNAMIC", "DIRECTORY"])]
-    #if type == "worldcup":
-    #    filter = filter & (df.region == "Paris")
-    #return df[filter]
-    #if type == "worldcup":
-    #    return df[df.region == "Paris"]
-    #else:
-    #    return df
+    df = df[(df.timestamp > pd.Timestamp(TIMESTAMP_START)) & (df.timestamp < pd.Timestamp(TIMESTAMP_STOP))]
+    filter = df["type"].isin(["HTML", "DYNAMIC", "DIRECTORY"])
+    if type == "worldcup":
+        #filter = filter & df.region.isin(["Paris", "SantaClara"])
+        filter = filter & df.region.isin(["Paris"])
+    return df[filter]
 
 def session_number(v):
     diff = v.timestamp.diff(1)

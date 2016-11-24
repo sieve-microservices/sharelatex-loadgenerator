@@ -14,9 +14,9 @@ export LOCUST_USERS=10
 export LOCUST_METRICS_EXPORT="measurements"
 export LOCUST_MEASUREMENT_NAME="measurement"
 export LOCUST_MEASUREMENT_DESCRIPTION="linear increase"
-export LOCUST_INFLUXDB_SERVER="influxdb"
+export LOCUST_INFLUXDB_SERVER="influxdb.local"
 export LOCUST_INFLUXDB_PORT="8086"
-export LOCUST_INFLUXDB_USER="influxdb.local"
+export LOCUST_INFLUXDB_USER="influxdb"
 export LOCUST_INFLUXDB_PASSWORD="rewtrewt"
 export LOCUST_INFLUXDB_DB="metrics"
 export LOCUST_STATSD_HOST="telegraf.local"
@@ -41,14 +41,19 @@ export LOCUST_STATSD_HOST="telegraf.local"
 #  done
 #done
 
-
-for i in $(seq 1 1); do
-  export LOCUST_USERS=40
-  export LOCUST_LOAD_TYPE=worldcup
-  export LOCUST_LOG_PATH="${ROOT_DIR}/logs/wc_day38_2.gz"
-  export LOCUST_MEASUREMENT_NAME="random-users-mean¼4-std20-60min-$i"
-  locust -H http://sharelatex.local
-done
+export LOCUST_USERS=40
+export LOCUST_LOAD_TYPE=worldcup
+export LOCUST_LOG_PATH="${ROOT_DIR}/logs/wc_day38_1.gz"
+export LOCUST_TIMESTAMP_START="1998-06-02 08:50:00"
+export LOCUST_TIMESTAMP_STOP="1998-06-02 09:50:00"
+#export LOCUST_TIMESTAMP_START="1998-06-02 09:30:00"
+#export LOCUST_TIMESTAMP_STOP="1998-06-02 09:35:00"
+export LOCUST_MEASUREMENT_NAME="worldcup98-http-scale"
+./cpu_scale.sh http_request_scale.tick
+locust -H http://sharelatex.local
+export LOCUST_MEASUREMENT_NAME="worldcup98-cpu-scale"
+./cpu_scale.sh cpu_scale.tick
+locust -H http://sharelatex.local
 
 #for i in $(seq 1 5); do
 #    export LOCUST_USERS=70

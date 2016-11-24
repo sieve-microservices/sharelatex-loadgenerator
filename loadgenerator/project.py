@@ -80,8 +80,8 @@ def share_project(l):
     l.client.post("/project/%s/users" % l.project_id, data=p, name="/project/[id]/users")
 
 def spell_check(l):
-    data = dict(_csrf=l.csrf_token, language="en", words=randomwords.sample(1, 10))
-    l.client.post("/spelling/check", json=data)
+    data = dict(language="en", _csrf=l.csrf_token, words=randomwords.sample(1, 1), token=l.user_id)
+    r = l.client.post("/spelling/check", json=data)
 
 def file_upload(l):
     path = os.path.join(ROOT_PATH, "tech-support.jpg")
@@ -120,7 +120,7 @@ def find_user_id(doc):
     return json.loads(user.group(1))["id"]
 
 class Page(TaskSet):
-    tasks = { stop: 1, chat: 2, edit_document: 2, file_upload: 2, show_history: 2, file_upload: 2, compile: 2, share_project: 1, spell_check: 2}
+    tasks = { stop: 1, chat: 2, edit_document: 2, file_upload: 2, show_history: 2, file_upload: 2, compile: 2, share_project: 1, spell_check: 0}
     def on_start(self):
         projects = self.parent.projects
         assert len(projects) > 0

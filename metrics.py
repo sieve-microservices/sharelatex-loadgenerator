@@ -94,6 +94,19 @@ SYSTEM_METRICS = ["cpu", "blkio", "mem", "net"]
 CONTAINER_IMAGE_PATTERNS = defaultdict(lambda: ".*{0}:latest$")
 CONTAINER_IMAGE_PATTERNS["haproxy"] = ".*agent-instance:[^:]+$"
 
+def dump_autoscaling(name, path, begin, now):
+    q = "select * from \"autoscaling\" where time > '%s' and time < '%s'"
+    path = os.path.join(path, name + ".gz")
+    query = scroll(q, begin, now)
+    with gzip.open(path, "wb") as f:
+        writer = csv.DictWriter(f,
+                                fieldnames=["time", "service_name", "service_id", "scale"],
+                                dialect=csv.excel_tab,
+                                extrasaction='ignore')
+        writer.writeheader()
+        for _, row in query:
+            writer.writerow(row)
+
 def dump_app(app_name, path, begin, now):
     app = dump_column_names(app_name)
     queries = []
@@ -153,11 +166,15 @@ def export(metadata, start, end):
 
     for app in APPS:
         metadata["services"].append(dump_app(app, path, start, end))
+
+    dump_autoscaling("autoscaling", path, start, end)
+    metadata["autoscaling"] = dict(name="autoscaling", filename="autoscaling.tar.gz", fields=["scale"], tags=["service_name", "service_id"])
+
     with open(os.path.join(path, "metadata.json"), "w+") as f:
         json.dump(metadata, f, cls=Encoder, sort_keys=True, indent=4)
         f.flush()
 
 if __name__ == '__main__':
     end = datetime.utcnow()
-    start = end - timedelta(minutes=1)
+    start = end - timedelta(minutes=60)
     export(dict(measurement_name="test", metrics_export="test"), start, end)
